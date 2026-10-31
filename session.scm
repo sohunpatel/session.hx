@@ -20,7 +20,9 @@
   (string-append (environment-value "XDG_DATA_HOME"
                                     (string-append (env-var "HOME") "/.local/share"))
                  "/helix/sessions"))
+(define SESSION-PARENT (parent-name SESSION-DIRECTORY))
 (define SESSION-STORE (string-append SESSION-DIRECTORY "/sessions.scm"))
+(define *active-session-name* #false)
 
 (define (session-valid-name? name)
   (and (string? name)
@@ -45,8 +47,8 @@
     [else (car arguments)]))
 
 (define (ensure-session-directory!)
-  (unless (path-exists? ".helix")
-    (create-directory! ".helix"))
+  (unless (path-exists? SESSION-PARENT)
+    (create-directory! SESSION-PARENT))
   (unless (path-exists? SESSION-DIRECTORY)
     (create-directory! SESSION-DIRECTORY)))
 
@@ -114,23 +116,35 @@
 (define (current-project)
   (helix.static.get-helix-cwd))
 
+(define (save-session-documents! name documents)
+  (let ([records (read-session-store)]
+        [project (current-project)])
+    (if (not records)
+        (begin
+          (set-error! "Session store is malformed")
+          #false)
+        (begin
+          (write-session-store!
+           (cons (list project name documents)
+                 (without-session records project name)))
+          #true))))
+
+(define (session-save-active)
+  (when *active-session-name*
+    (save-session-documents! *active-session-name* (file-backed-documents))))
+
 ;;@doc
 ;; Save all file-backed buffers in a shared named session store.
 (define (session-create . arguments)
   (let ([name (session-name arguments "session-create")])
     (when name
       (ensure-session-directory!)
-      (let ([records (read-session-store)])
-        (if (not records)
-            (set-error! "Session store is malformed")
-            (let ([project (current-project)]
-                  [documents (file-backed-documents)])
-              (write-session-store!
-               (cons (list project name documents)
-                     (without-session records project name)))
-              (set-status! (string-append "Saved session '" name "' ("
-                                          (number->string (length documents))
-                                          " files)"))))))))
+      (let ([documents (file-backed-documents)])
+        (when (save-session-documents! name documents)
+          (set! *active-session-name* name)
+          (set-status! (string-append "Saved session '" name "' ("
+                                      (number->string (length documents))
+                                      " files)")))))))
 
 ;;@doc
 ;; Delete a named session for the current project.
@@ -175,6 +189,7 @@
               (if (not record)
                   (set-error! (string-append "Session '" name "' does not exist"))
                   (let ([documents (list-ref record 2)])
+                    (set! *active-session-name* name)
                     (if (null? documents)
                         (set-status! (string-append "Session '" name "' is empty"))
                         (begin
@@ -197,4 +212,6 @@
       [(find-project-session records (current-project))
        (session-load (list-ref (find-project-session records (current-project)) 1))])))
 
+(register-hook 'document-opened (lambda (_) (session-save-active)))
+(register-hook 'document-closed (lambda (_) (session-save-active)))
 (enqueue-thread-local-callback session-autoload)

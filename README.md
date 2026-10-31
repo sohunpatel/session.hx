@@ -41,7 +41,9 @@ Session names must not be empty or contain `/`, `\`, or `..`.
 
 Creating or updating a session places it first in the shared session store for its
 current working directory. When Helix starts in that directory, the plugin loads the
-most recently saved session automatically. No `init.scm` conditionals are needed.
+most recently saved session automatically. While a session is active, opening or
+closing a file-backed buffer updates it in the shared store. No `init.scm`
+conditionals are needed.
 
 ## Keybindings
 
