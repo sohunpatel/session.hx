@@ -2,6 +2,11 @@
 (require "helix/misc.scm")
 (require (prefix-in helix. "helix/commands.scm"))
 (require (prefix-in helix.static. "helix/static.scm"))
+(require (only-in "helix/components.scm"
+                  status-element
+                  span
+                  push-status-element!
+                  theme-scope-ref))
 (require "steel/result")
 
 (provide session-create
@@ -23,6 +28,14 @@
 (define SESSION-PARENT (parent-name SESSION-DIRECTORY))
 (define SESSION-STORE (string-append SESSION-DIRECTORY "/sessions.scm"))
 (define *active-session-name* #false)
+
+(define (render-session-status _view-id _focused)
+  (if *active-session-name*
+      (list (span (string-append " session: " *active-session-name*)
+                  (theme-scope-ref "ui.statusline")))
+      '()))
+
+(push-status-element! 'right (status-element render-session-status))
 
 (define (session-valid-name? name)
   (and (string? name)
@@ -177,7 +190,7 @@
                            (string-append "Sessions: " (string-join names ", "))))))))
 
 ;;@doc
-;; Open the files from a named session in vertical splits.
+;; Open the files from a named session without changing the layout.
 (define (session-load . arguments)
   (let ([name (session-name arguments "session-load")])
     (when name
@@ -193,11 +206,9 @@
                     (if (null? documents)
                         (set-status! (string-append "Session '" name "' is empty"))
                         (begin
-                          (helix.open (car documents))
                           (for-each (lambda (document)
-                                      (helix.static.vsplit)
                                       (helix.open document))
-                                    (cdr documents))
+                                    documents)
                           (set-status! (string-append "Loaded session '" name "' ("
                                                       (number->string (length documents))
                                                       " files)"))))))))))))

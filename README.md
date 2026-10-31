@@ -30,7 +30,7 @@ Load it from `~/.config/helix/helix.scm`:
 | Command | Description |
 | --- | --- |
 | `:session-create <name>` | Save open file-backed buffers under `<name>`. Existing sessions are replaced. |
-| `:session-load <name>` | Open a saved session's files in vertical splits. This adds to the current layout. |
+| `:session-load <name>` | Open a saved session's files without changing the layout. |
 | `:session-delete <name>` | Delete a saved session. |
 | `:session-list` | Display saved session names in Helix's status line. |
 | `:session-autoload` | Load the most recently saved session for the current project. |
@@ -43,7 +43,8 @@ Creating or updating a session places it first in the shared session store for i
 current working directory. When Helix starts in that directory, the plugin loads the
 most recently saved session automatically. While a session is active, opening or
 closing a file-backed buffer updates it in the shared store. No `init.scm`
-conditionals are needed.
+conditionals are needed. The active session name is shown on the right side of the
+status bar.
 
 ## Keybindings
 
