@@ -2,14 +2,25 @@
 (require "helix/misc.scm")
 (require (prefix-in helix. "helix/commands.scm"))
 (require (prefix-in helix.static. "helix/static.scm"))
+(require "steel/result")
 
 (provide session-create
          session-delete
          session-list
-         session-load)
+         session-load
+         session-autoload)
 
-(define SESSION-DIRECTORY ".helix/sessions")
-(define SESSION-EXTENSION ".scm")
+(define (environment-value name fallback)
+  (let ([value (maybe-get-env-var name)])
+    (if (Ok? value)
+        (unwrap-ok value)
+        fallback)))
+
+(define SESSION-DIRECTORY
+  (string-append (environment-value "XDG_DATA_HOME"
+                                    (string-append (env-var "HOME") "/.local/share"))
+                 "/helix/sessions"))
+(define SESSION-STORE (string-append SESSION-DIRECTORY "/sessions.scm"))
 
 (define (session-valid-name? name)
   (and (string? name)
@@ -18,8 +29,10 @@
        (not (string-contains? name "\\"))
        (not (string-contains? name ".."))))
 
-(define (session-path name)
-  (string-append SESSION-DIRECTORY "/" name SESSION-EXTENSION))
+(define (read-forms path)
+  (call-with-input-file path
+                        (lambda (port)
+                          (~> port read-port-to-string read!))))
 
 (define (session-name arguments command)
   (cond
@@ -43,11 +56,6 @@
                  (editor-document->path document-id))
                (editor-all-documents))))
 
-(define (read-session path)
-  (call-with-input-file path
-                        (lambda (port)
-                          (~> port read-port-to-string read! car))))
-
 (define (list-of-strings? values)
   (cond
     [(null? values) #true]
@@ -55,70 +63,138 @@
     [(not (string? (car values))) #false]
     [else (list-of-strings? (cdr values))]))
 
+(define (session-record? record)
+  (and (list? record)
+       (= (length record) 3)
+       (string? (list-ref record 0))
+       (session-valid-name? (list-ref record 1))
+       (list-of-strings? (list-ref record 2))))
+
+(define (session-store? records)
+  (cond
+    [(null? records) #true]
+    [(not (pair? records)) #false]
+    [(not (session-record? (car records))) #false]
+    [else (session-store? (cdr records))]))
+
+(define (read-session-store)
+  (if (path-exists? SESSION-STORE)
+      (let ([forms (read-forms SESSION-STORE)])
+        (if (and (= (length forms) 1)
+                 (session-store? (car forms)))
+            (car forms)
+            #false))
+      '()))
+
+(define (write-session-store! records)
+  (call-with-port (open-output-file SESSION-STORE #:exists 'truncate)
+                  (lambda (port)
+                    (write records port))))
+
+(define (find-session records project name)
+  (cond
+    [(null? records) #false]
+    [(and (equal? project (list-ref (car records) 0))
+          (equal? name (list-ref (car records) 1)))
+     (car records)]
+    [else (find-session (cdr records) project name)]))
+
+(define (find-project-session records project)
+  (cond
+    [(null? records) #false]
+    [(equal? project (list-ref (car records) 0)) (car records)]
+    [else (find-project-session (cdr records) project)]))
+
+(define (without-session records project name)
+  (filter (lambda (record)
+            (not (and (equal? project (list-ref record 0))
+                      (equal? name (list-ref record 1)))))
+          records))
+
+(define (current-project)
+  (helix.static.get-helix-cwd))
+
 ;;@doc
-;; Save all file-backed buffers in a project-local named session.
+;; Save all file-backed buffers in a shared named session store.
 (define (session-create . arguments)
   (let ([name (session-name arguments "session-create")])
     (when name
       (ensure-session-directory!)
-      (let ([path (session-path name)]
-            [documents (file-backed-documents)])
-        (call-with-port (open-output-file path #:exists 'truncate)
-                        (lambda (port)
-                          (write documents port)))
-        (set-status! (string-append "Saved session '" name "' (" (number->string (length documents))
-                                    " files)"))))))
+      (let ([records (read-session-store)])
+        (if (not records)
+            (set-error! "Session store is malformed")
+            (let ([project (current-project)]
+                  [documents (file-backed-documents)])
+              (write-session-store!
+               (cons (list project name documents)
+                     (without-session records project name)))
+              (set-status! (string-append "Saved session '" name "' ("
+                                          (number->string (length documents))
+                                          " files)"))))))))
 
 ;;@doc
-;; Delete a project-local named session.
+;; Delete a named session for the current project.
 (define (session-delete . arguments)
   (let ([name (session-name arguments "session-delete")])
     (when name
-      (let ([path (session-path name)])
-        (if (path-exists? path)
-            (begin
-              (delete-file! path)
-              (set-status! (string-append "Deleted session '" name "'")))
-            (set-error! (string-append "Session '" name "' does not exist")))))))
+      (let ([records (read-session-store)]
+            [project (current-project)])
+        (cond
+          [(not records)
+           (set-error! "Session store is malformed")]
+          [(not (find-session records project name))
+           (set-error! (string-append "Session '" name "' does not exist"))]
+          [else
+           (write-session-store! (without-session records project name))
+           (set-status! (string-append "Deleted session '" name "'"))])))))
 
 ;;@doc
-;; Show the project-local session names in the status line.
+;; Show the session names saved for the current project.
 (define (session-list)
-  (if (path-exists? SESSION-DIRECTORY)
-      (let ([names (map (lambda (path)
-                          (substring (file-name path)
-                                     0
-                                     (- (string-length (file-name path))
-                                        (string-length SESSION-EXTENSION))))
-                        (filter (lambda (path)
-                                  (and (is-file? path)
-                                       (ends-with? (file-name path) SESSION-EXTENSION)))
-                                (read-dir SESSION-DIRECTORY)))])
-        (set-status! (if (null? names)
-                         "No saved sessions"
-                         (string-append "Sessions: " (string-join names ", ")))))
-      (set-status! "No saved sessions")))
+  (let ([records (read-session-store)])
+    (if (not records)
+        (set-error! "Session store is malformed")
+        (let ([names (map (lambda (record) (list-ref record 1))
+                          (filter (lambda (record)
+                                    (equal? (current-project) (list-ref record 0)))
+                                  records))])
+          (set-status! (if (null? names)
+                           "No saved sessions"
+                           (string-append "Sessions: " (string-join names ", "))))))))
 
 ;;@doc
 ;; Open the files from a named session in vertical splits.
 (define (session-load . arguments)
   (let ([name (session-name arguments "session-load")])
     (when name
-      (let ([path (session-path name)])
-        (if (not (path-exists? path))
-            (set-error! (string-append "Session '" name "' does not exist"))
-            (let ([documents (read-session path)])
-              (cond
-                [(not (list-of-strings? documents))
-                 (set-error! (string-append "Session '" name "' is malformed"))]
-                [(null? documents)
-                 (set-status! (string-append "Session '" name "' is empty"))]
-                [else
-                 (helix.open (car documents))
-                 (for-each (lambda (document)
-                             (helix.static.vsplit)
-                             (helix.open document))
-                           (cdr documents))
-                 (set-status! (string-append "Loaded session '" name "' ("
-                                             (number->string (length documents))
-                                             " files)"))])))))))
+      (let ([records (read-session-store)]
+            [project (current-project)])
+        (if (not records)
+            (set-error! "Session store is malformed")
+            (let ([record (find-session records project name)])
+              (if (not record)
+                  (set-error! (string-append "Session '" name "' does not exist"))
+                  (let ([documents (list-ref record 2)])
+                    (if (null? documents)
+                        (set-status! (string-append "Session '" name "' is empty"))
+                        (begin
+                          (helix.open (car documents))
+                          (for-each (lambda (document)
+                                      (helix.static.vsplit)
+                                      (helix.open document))
+                                    (cdr documents))
+                          (set-status! (string-append "Loaded session '" name "' ("
+                                                      (number->string (length documents))
+                                                      " files)"))))))))))))
+
+;;@doc
+;; Load the most recently saved session for the current project.
+(define (session-autoload)
+  (let ([records (read-session-store)])
+    (cond
+      [(not records)
+       (set-error! "Session store is malformed")]
+      [(find-project-session records (current-project))
+       (session-load (list-ref (find-project-session records (current-project)) 1))])))
+
+(session-autoload)

@@ -1,11 +1,13 @@
 # session.hx
 
-A project-local session manager for Helix's experimental Steel runtime, inspired by
+A session manager for Helix's experimental Steel runtime, inspired by
 [nvim-possession](https://github.com/jedrzejboczar/nvim-possession).
 
-Sessions save the file-backed buffers currently open in Helix. They are stored as
-`.helix/sessions/<name>.scm`, so a project's sessions can be inspected, shared, or
-ignored alongside the rest of its local Helix state.
+Sessions save the file-backed buffers currently open in Helix. They are stored in the
+shared XDG data directory: `$XDG_DATA_HOME/helix/sessions` or, when
+`XDG_DATA_HOME` is unset, `~/.local/share/helix/sessions`. The most recently saved
+session for a project is loaded automatically when Helix starts from that project's
+directory.
 
 ## Installation
 
@@ -31,8 +33,15 @@ Load it from `~/.config/helix/helix.scm`:
 | `:session-load <name>` | Open a saved session's files in vertical splits. This adds to the current layout. |
 | `:session-delete <name>` | Delete a saved session. |
 | `:session-list` | Display saved session names in Helix's status line. |
+| `:session-autoload` | Load the most recently saved session for the current project. |
 
 Session names must not be empty or contain `/`, `\`, or `..`.
+
+## Automatic loading
+
+Creating or updating a session places it first in the shared session store for its
+current working directory. When Helix starts in that directory, the plugin loads the
+most recently saved session automatically. No `init.scm` conditionals are needed.
 
 ## Keybindings
 
