@@ -197,4 +197,4 @@
       [(find-project-session records (current-project))
        (session-load (list-ref (find-project-session records (current-project)) 1))])))
 
-(session-autoload)
+(enqueue-thread-local-callback session-autoload)
