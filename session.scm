@@ -223,6 +223,10 @@
       [(find-project-session records (current-project))
        (session-load (list-ref (find-project-session records (current-project)) 1))])))
 
+(define (session-autoload-on-startup)
+  (when (null? (file-backed-documents))
+    (session-autoload)))
+
 (register-hook 'document-opened (lambda (_) (session-save-active)))
 (register-hook 'document-closed (lambda (_) (session-save-active)))
-(enqueue-thread-local-callback session-autoload)
+(enqueue-thread-local-callback session-autoload-on-startup)
